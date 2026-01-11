@@ -519,6 +519,12 @@ export class Serializer {
         return 'z.coerce.date()';
       case 'undefined':
         return '.optional()';
+      case 'LineString':
+        return 'z.array(z.object({ x: z.coerce.number(), y: z.coerce.number() }))';
+      case 'Point':
+        return 'z.object({ x: z.coerce.number(), y: z.coerce.number() })';
+      case 'Polygon':
+        return 'z.array(z.array(z.object({ x: z.coerce.number(), y: z.coerce.number() })))';
     }
     return node.name;
   }
