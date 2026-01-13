@@ -126,10 +126,24 @@ export class PostgresIntrospector extends Introspector<PostgresDB> {
 
   async introspect(options: IntrospectOptions<PostgresDB>) {
     const tables = await this.getTables(options);
+
+    const postgisSystemTables = ['geography_columns', 'geometry_columns', 'spatial_ref_sys'];
+    const filteredTables = tables.filter(({ name, schema }) => {
+      if (schema === 'public' && postgisSystemTables.includes(name)) {
+        return false;
+      }
+
+      if (schema === 'tiger' || schema === 'topology') {
+        return false;
+      }
+
+      return true;
+    });
+
     const [enums, domains] = await Promise.all([
       this.#introspectEnums(options.db),
       this.#introspectDomains(options.db),
     ]);
-    return this.#createDatabaseMetadata(tables, enums, domains);
+    return this.#createDatabaseMetadata(filteredTables, enums, domains);
   }
 }

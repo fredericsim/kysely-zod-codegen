@@ -30,16 +30,47 @@ export type SerializerOptions = {
  */
 export class Serializer {
   readonly typeOnlyImports: boolean;
+  private serializableTypeNames: Set<string> = new Set();
 
   constructor(options: SerializerOptions = {}) {
     this.typeOnlyImports = options.typeOnlyImports ?? true;
   }
 
   serialize(nodes: StatementNode[]) {
+    this.serializableTypeNames.clear();
+
+    for (const node of nodes) {
+      if (node.type === NodeType.EXPORT_STATEMENT &&
+          node.argument.type === NodeType.ALIAS_DECLARATION) {
+
+        const expression = node.argument.body.type === NodeType.TEMPLATE
+        ? node.argument.body.expression
+        : node.argument.body;
+
+        if (this.serializableTypeNames.has(node.argument.name)) continue;
+
+        if (this.isSerializableToZod(expression, nodes)) {
+          this.serializableTypeNames.add(node.argument.name);
+        }
+      }
+    }
+
+    const sortedNodes = [...nodes].sort((a, b) => {
+      if (a.type !== NodeType.EXPORT_STATEMENT || b.type !== NodeType.EXPORT_STATEMENT) return 0;
+      if (a.argument.type !== NodeType.ALIAS_DECLARATION || b.argument.type !== NodeType.ALIAS_DECLARATION) return 0;
+
+      const aExpr = a.argument.body.type === NodeType.TEMPLATE ? a.argument.body.expression : a.argument.body;
+      const bExpr = b.argument.body.type === NodeType.TEMPLATE ? b.argument.body.expression : b.argument.body;
+
+      if (aExpr.type === NodeType.OBJECT_EXPRESSION && bExpr.type === NodeType.ARRAY_EXPRESSION) return -1;
+      if (aExpr.type === NodeType.ARRAY_EXPRESSION && bExpr.type === NodeType.OBJECT_EXPRESSION) return 1;
+      return 0;
+    });
+
     let data = '';
     let i = 0;
 
-    for (const node of nodes) {
+    for (const node of sortedNodes) {
       if (i >= 1) {
         data += '\n';
 
@@ -406,7 +437,15 @@ export class Serializer {
 
     switch (node.argument.type) {
       case NodeType.ALIAS_DECLARATION:
-        data += this.serializeAliasDeclarationZod(node.argument);
+        const expression = node.argument.body.type === NodeType.TEMPLATE
+          ? node.argument.body.expression
+          : node.argument.body;
+
+        if (this.isSerializableToZod(expression)) {
+          data += this.serializeAliasDeclarationZod(node.argument);
+        } else {
+          return '';
+        }
         break;
       case NodeType.INTERFACE_DECLARATION:
         data += this.serializeInterfaceDeclarationZod(node.argument);
@@ -414,6 +453,70 @@ export class Serializer {
     }
 
     return data;
+  }
+
+  isSerializableToZod(node: ExpressionNode, allNodes?: StatementNode[]): boolean {
+    switch (node.type) {
+      case NodeType.OBJECT_EXPRESSION:
+        return true;
+      case NodeType.ARRAY_EXPRESSION:
+        const arrayElement = (node as ArrayExpressionNode).values;
+        if (arrayElement.type === NodeType.IDENTIFIER) {
+          const name = (arrayElement as IdentifierNode).name;
+          const zodResult = this.serializeIdentifierZod(arrayElement as IdentifierNode);
+
+          if (zodResult.startsWith('z.') || zodResult === '.optional()') return true;
+          if (this.serializableTypeNames.has(name)) return true;
+
+          if (allNodes) {
+            const referencedNode = allNodes.find(n =>
+              n.type === NodeType.EXPORT_STATEMENT &&
+              (n as ExportStatementNode).argument.type === NodeType.ALIAS_DECLARATION &&
+              (n as ExportStatementNode).argument.name === name
+            ) as ExportStatementNode | undefined;
+
+            if (referencedNode && referencedNode.argument.type === NodeType.ALIAS_DECLARATION) {
+              const refExpr = referencedNode.argument.body.type === NodeType.TEMPLATE
+                ? referencedNode.argument.body.expression
+                : referencedNode.argument.body;
+              return this.isSerializableToZod(refExpr, allNodes);
+            }
+          }
+
+          return false;
+        }
+        return this.isSerializableToZod(arrayElement, allNodes);
+      case NodeType.IDENTIFIER:
+        const name = (node as IdentifierNode).name;
+        const zodResult = this.serializeIdentifierZod(node as IdentifierNode);
+        if (zodResult.startsWith('z.') || zodResult === '.optional()') return true;
+        if (this.serializableTypeNames.has(name)) return true;
+
+        if (allNodes) {
+          const referencedNode = allNodes.find(n =>
+            n.type === NodeType.EXPORT_STATEMENT &&
+            (n as ExportStatementNode).argument.type === NodeType.ALIAS_DECLARATION &&
+            (n as ExportStatementNode).argument.name === name
+          ) as ExportStatementNode | undefined;
+
+          if (referencedNode && referencedNode.argument.type === NodeType.ALIAS_DECLARATION) {
+            const refExpr = referencedNode.argument.body.type === NodeType.TEMPLATE
+              ? referencedNode.argument.body.expression
+              : referencedNode.argument.body;
+            return this.isSerializableToZod(refExpr, allNodes);
+          }
+        }
+
+        return false;
+      case NodeType.LITERAL:
+        return true;
+      case NodeType.UNION_EXPRESSION:
+      case NodeType.GENERIC_EXPRESSION:
+      case NodeType.EXTENDS_CLAUSE:
+      case NodeType.MAPPED_TYPE:
+      case NodeType.INFER_CLAUSE:
+        return false;
+    }
   }
 
   serializeExpressionZod(node: ExpressionNode) {
@@ -520,8 +623,6 @@ export class Serializer {
         return 'z.coerce.date()';
       case 'undefined':
         return '.optional()';
-      case 'Point':
-        return 'point';
     }
     return node.name;
   }
