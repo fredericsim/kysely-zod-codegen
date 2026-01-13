@@ -406,7 +406,8 @@ export class Serializer {
 
     switch (node.argument.type) {
       case NodeType.ALIAS_DECLARATION:
-        return ''
+        data += this.serializeAliasDeclarationZod(node.argument);
+        break;
       case NodeType.INTERFACE_DECLARATION:
         data += this.serializeInterfaceDeclarationZod(node.argument);
         break;
@@ -519,12 +520,8 @@ export class Serializer {
         return 'z.coerce.date()';
       case 'undefined':
         return '.optional()';
-      case 'LineString':
-        return 'z.array(z.object({ x: z.coerce.number(), y: z.coerce.number() }))';
       case 'Point':
-        return 'z.object({ x: z.coerce.number(), y: z.coerce.number() })';
-      case 'Polygon':
-        return 'z.array(z.array(z.object({ x: z.coerce.number(), y: z.coerce.number() })))';
+        return 'point';
     }
     return node.name;
   }
@@ -581,7 +578,7 @@ export class Serializer {
 
     data += 'const ';
     data += node.name;
-    data += ' ';
+    data += ' = ';
     data += this.serializeObjectExpressionZod(node.body);
 
     return data;
@@ -608,7 +605,7 @@ export class Serializer {
   serializeObjectExpressionZod(node: ObjectExpressionNode) {
     let data = '';
 
-    data += '= z.object({';
+    data += 'z.object({';
 
     if (node.properties.length) {
       data += '\n';
